@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import connectDB from '../../../../lib/mongodb';
 import TestRun from '../../../../models/TestRun';
+import ApprovedTarget from '../../../../models/ApprovedTarget';
+import Assessment from '../../../../models/Assessment';
 import ScenarioResult from '../../../../models/ScenarioResult';
 import Evidence from '../../../../models/Evidence';
 import BrowserAction from '../../../../models/BrowserAction';

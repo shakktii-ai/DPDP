@@ -25,6 +25,8 @@ const TestRunSchema = new mongoose.Schema(
       enum: [
         'queued',
         'starting_browser',
+        'running',
+        'in_progress',
         'inspecting_website',
         'capturing_evidence',
         'awaiting_user_input',
@@ -34,6 +36,18 @@ const TestRunSchema = new mongoose.Schema(
       ],
       default: 'queued',
       index: true,
+    },
+    workerId: {
+      type: String,
+      default: null,
+    },
+    claimedAt: {
+      type: Date,
+      default: null,
+    },
+    runOptions: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
     },
     progress: {
       type: Number,
@@ -104,7 +118,17 @@ const TestRunSchema = new mongoose.Schema(
     authTestingResult: {
       status: {
         type: String,
-        enum: ['performed', 'skipped', 'blocked', 'not_applicable'],
+        enum: [
+          'pending',
+          'running',
+          'passed',
+          'failed',
+          'needs_assistance',
+          'performed',
+          'skipped',
+          'blocked',
+          'not_applicable',
+        ],
         default: 'not_applicable',
       },
       authMethod: { type: String, default: null },

@@ -1,6 +1,8 @@
 import connectDB from '@/lib/mongodb';
 import Assessment from '@/models/Assessment';
 import TestRun from '@/models/TestRun';
+import ApprovedTarget from '@/models/ApprovedTarget';
+import Organization from '@/models/Organization';
 import Evidence from '@/models/Evidence';
 import ScenarioResult from '@/models/ScenarioResult';
 import { requireAuth } from '@/lib/auth';

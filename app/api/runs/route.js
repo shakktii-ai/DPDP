@@ -7,6 +7,7 @@ import AuditLog from '../../../models/AuditLog';
 import { requireAuth } from '../../../lib/auth';
 import { executeInspectionRun } from '../../../lib/browser-worker';
 import { emitAssessmentEvent } from '../../../lib/event-bus';
+import { redactSensitiveData } from '../../../lib/evidence-redactor';
 
 /**
  * GET /api/runs
@@ -99,6 +100,13 @@ export async function POST(request) {
       });
     }
 
+    // Determine whether authenticated testing was requested
+    const isAuthRequested = Boolean(
+      options.credentials?.enabled &&
+      !options.credentials?.skipAuthenticatedTesting &&
+      (options.credentials?.username || options.credentials?.authMethod === 'password')
+    );
+
     // Create TestRun in queued state
     const testRun = await TestRun.create({
       assessmentId: assessment._id,
@@ -109,6 +117,15 @@ export async function POST(request) {
       maxPages: options.maxPages || 15,
       maxActions: options.maxActions || 50,
       timeoutSeconds: options.timeoutSeconds || 120,
+      runOptions: options,
+      authTestingResult: {
+        status: isAuthRequested ? 'pending' : 'not_applicable',
+        authMethod: options.credentials?.authMethod || null,
+        loginUrl: options.credentials?.loginUrl || null,
+        usernameMasked: options.credentials?.username ? redactSensitiveData(options.credentials.username) : null,
+        sessionEstablished: false,
+        details: isAuthRequested ? 'Queued for authenticated browser inspection' : null,
+      },
     });
 
     await emitAssessmentEvent({
