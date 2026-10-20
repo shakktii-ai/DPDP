@@ -1,7 +1,33 @@
 import dns from 'dns';
+import fs from 'fs';
+import path from 'path';
+
 try {
   dns.setServers(['8.8.8.8', '1.1.1.1']);
 } catch (e) {}
+
+// Auto-load .env.local if not already provided by environment
+if (!process.env.MONGODB_URI) {
+  try {
+    const envPath = path.resolve(process.cwd(), '.env.local');
+    if (fs.existsSync(envPath)) {
+      const envContent = fs.readFileSync(envPath, 'utf-8');
+      envContent.split('\n').forEach((line) => {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#')) {
+          const eqIdx = trimmed.indexOf('=');
+          if (eqIdx > 0) {
+            const key = trimmed.slice(0, eqIdx).trim();
+            const val = trimmed.slice(eqIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+            if (!process.env[key]) {
+              process.env[key] = val;
+            }
+          }
+        }
+      });
+    }
+  } catch (err) {}
+}
 
 import connectDB from '../lib/mongodb.js';
 import { claimNextQueuedJob, reconcileStaleJobs, getQueueMetrics } from '../lib/worker-queue.js';

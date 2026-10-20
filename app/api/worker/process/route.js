@@ -44,11 +44,11 @@ export async function POST(request) {
       // Body may be empty if caller wants next FIFO job
     }
 
-    const { runId, options = {}, synchronous = false } = body;
+    const { runId, options = {}, synchronous = false, force = false } = body;
 
     let claimedRun = null;
     if (runId) {
-      claimedRun = await claimSpecificJob(runId);
+      claimedRun = await claimSpecificJob(runId, null, { force });
     } else {
       claimedRun = await claimNextQueuedJob();
     }
@@ -58,17 +58,26 @@ export async function POST(request) {
       if (runId) {
         const existing = await TestRun.findById(runId);
         if (existing) {
-          return NextResponse.json({
-            success: true,
-            message: `TestRun is already in status: ${existing.status}`,
-            testRun: existing,
-          });
+          // If already completed, return existing
+          if (existing.status === 'completed') {
+            return NextResponse.json({
+              success: true,
+              message: `TestRun is already completed.`,
+              testRun: existing,
+            });
+          }
+          // If stuck in starting_browser or running, force claim if requested
+          if (force) {
+            claimedRun = await claimSpecificJob(runId, null, { force: true });
+          }
         }
       }
-      return NextResponse.json({
-        success: false,
-        message: 'No eligible queued runs found to claim.',
-      }, { status: 404 });
+      if (!claimedRun) {
+        return NextResponse.json({
+          success: false,
+          message: 'No eligible queued runs found to claim.',
+        }, { status: 404 });
+      }
     }
 
     // Merge options with any saved runOptions on the TestRun

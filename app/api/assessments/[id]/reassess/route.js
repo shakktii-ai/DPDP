@@ -227,17 +227,15 @@ export async function POST(request, { params }) {
       url: prevAssessment.targetUrl,
     });
 
-    // Asynchronously dispatch the real Playwright worker
-    const workerOptions = {
-      credentials: authOptions,
-      maxPages: 15,
-      maxActions: 50,
-      timeoutSeconds: 120,
-    };
-
-    executeInspectionRun(testRun._id, workerOptions).catch((workerErr) => {
-      console.error(`[Reassessment Worker Error for ${testRun._id}]:`, workerErr);
-    });
+    // In serverless environments (e.g. Vercel), do NOT run unawaited background browser processes.
+    // Serverless containers freeze immediately on response return and lack Chromium binaries.
+    // Instead, leave the reassessment in 'queued' state for the persistent worker daemon to claim.
+    const isServerless = process.env.VERCEL === '1' || process.env.NEXT_RUNTIME === 'edge';
+    if (!isServerless && process.env.AUTO_SPAWN_LOCAL_WORKER !== 'false') {
+      executeInspectionRun(testRun._id, workerOptions).catch((workerErr) => {
+        console.error(`[Local Reassessment Worker Error for ${testRun._id}]:`, workerErr);
+      });
+    }
 
     return NextResponse.json(
       {

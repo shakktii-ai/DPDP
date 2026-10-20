@@ -170,10 +170,15 @@ export async function POST(request) {
       status: 'success',
     });
 
-    // Asynchronously dispatch the browser worker (do not block the HTTP response)
-    executeInspectionRun(testRun._id, options).catch((workerErr) => {
-      console.error(`[BrowserWorker Daemon Error for ${testRun._id}]:`, workerErr);
-    });
+    // In serverless environments (e.g. Vercel), do NOT run unawaited background browser processes.
+    // Serverless containers freeze immediately on response return and lack Chromium binaries.
+    // Instead, leave the run in 'queued' state for the persistent worker daemon to claim and execute.
+    const isServerless = process.env.VERCEL === '1' || process.env.NEXT_RUNTIME === 'edge';
+    if (!isServerless && process.env.AUTO_SPAWN_LOCAL_WORKER !== 'false') {
+      executeInspectionRun(testRun._id, options).catch((workerErr) => {
+        console.error(`[Local Worker Error for ${testRun._id}]:`, workerErr);
+      });
+    }
 
     return NextResponse.json({ success: true, testRun }, { status: 201 });
   } catch (err) {

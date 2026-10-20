@@ -256,12 +256,13 @@ export default function CustomerLiveTestingPage({ params }) {
       const res = await fetch('/api/worker/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ runId: testRun?._id }),
+        body: JSON.stringify({ runId: testRun?._id, force: true }),
       });
       const data = await res.json();
       if (data.success) {
         setActionMessage(data.message || 'Worker successfully claimed job.');
         if (data.testRun) setTestRun(data.testRun);
+        fetchSnapshot();
       } else {
         alert(data.message || data.error || 'Failed to trigger worker');
       }
@@ -554,9 +555,24 @@ export default function CustomerLiveTestingPage({ params }) {
                     </p>
                   </div>
                   {isRunning && (
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-xs font-mono text-slate-600">
-                      <RefreshCw className="w-3 h-3 animate-spin text-[#2d523e]" />
-                      <span>{testRun?.currentStep || 'Initializing browser sandbox'}</span>
+                    <div className="space-y-3">
+                      <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-xs font-mono text-slate-600">
+                        <RefreshCw className="w-3 h-3 animate-spin text-[#2d523e]" />
+                        <span>{testRun?.currentStep || 'Initializing browser sandbox'}</span>
+                      </div>
+                      <div className="pt-2 flex flex-col items-center gap-2">
+                        <button
+                          onClick={handleTriggerWorker}
+                          disabled={isActionLoading}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-[#2d523e] text-white hover:bg-[#234131] shadow-xs transition-colors"
+                        >
+                          <Play className="w-3.5 h-3.5" />
+                          <span>{isActionLoading ? 'Starting Worker...' : 'Trigger Playwright Worker Now'}</span>
+                        </button>
+                        <p className="text-[11px] text-slate-400 max-w-xs">
+                          In serverless production (Vercel), ensure your persistent worker daemon (<code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700 font-mono">npm run worker</code>) is running, or click above to trigger execution.
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>
