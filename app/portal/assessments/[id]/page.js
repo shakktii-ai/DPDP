@@ -248,13 +248,40 @@ export default function CustomerLiveTestingPage({ params }) {
     }
   };
 
+  // Trigger Playwright worker to claim and execute the run immediately
+  const handleTriggerWorker = async () => {
+    try {
+      setIsActionLoading(true);
+      setActionMessage('');
+      const res = await fetch('/api/worker/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: testRun?._id }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActionMessage(data.message || 'Worker successfully claimed job.');
+        if (data.testRun) setTestRun(data.testRun);
+      } else {
+        alert(data.message || data.error || 'Failed to trigger worker');
+      }
+    } catch (err) {
+      alert(`Worker trigger error: ${err.message}`);
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
   const status = testRun?.status || assessment?.status || 'queued';
-  const progressPct = testRun?.progress || (status === 'completed' ? 100 : status === 'queued' ? 5 : 15);
+  const isQueued = status === 'queued';
   const isCompleted = status === 'completed';
   const isFailed = status === 'failed';
   const isCancelled = status === 'cancelled';
   const isPaused = status === 'awaiting_user_input' || testRun?.userAssistanceRequired;
-  const isRunning = !isCompleted && !isFailed && !isCancelled && !isPaused;
+  const isRunning = !isCompleted && !isFailed && !isCancelled && !isPaused && !isQueued;
+  const progressPct = typeof testRun?.progress === 'number'
+    ? testRun.progress
+    : (isCompleted ? 100 : isQueued ? 0 : 15);
 
   const targetDomain = testRun?.targetId?.approvedDomain || assessment?.targetUrl?.replace(/^https?:\/\//, '') || 'Website In-Scope';
   const targetUrl = testRun?.targetId?.targetUrl || assessment?.targetUrl || 'https://' + targetDomain;
@@ -460,6 +487,56 @@ export default function CustomerLiveTestingPage({ params }) {
                     <ExternalLink className="w-3.5 h-3.5" />
                   </a>
                 </div>
+              ) : isQueued ? (
+                /* Queued / Waiting for Worker State */
+                <div className="text-center p-8 space-y-4">
+                  <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mx-auto shadow-2xs animate-pulse">
+                    <Clock className="w-8 h-8 text-amber-600" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-bold text-slate-900">
+                      Waiting for Playwright Worker
+                    </h3>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                      Assessment job has been submitted to the queue. Waiting for an active Playwright worker agent to claim the job and launch browser testing.
+                    </p>
+                  </div>
+                  <div className="pt-2">
+                    <button
+                      onClick={handleTriggerWorker}
+                      disabled={isActionLoading}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-[#2d523e] text-white hover:bg-[#234131] shadow-xs transition-colors"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                      <span>{isActionLoading ? 'Assigning Worker...' : 'Launch Worker Now'}</span>
+                    </button>
+                  </div>
+                </div>
+              ) : isFailed ? (
+                /* Failed State */
+                <div className="text-center p-8 space-y-4">
+                  <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center mx-auto shadow-2xs">
+                    <AlertTriangle className="w-8 h-8 text-rose-600" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-bold text-rose-900">
+                      Inspection Execution Failed
+                    </h3>
+                    <p className="text-xs text-rose-600 max-w-md mx-auto">
+                      {testRun?.errorMessage || assessment?.failureReason || 'An error occurred during Playwright inspection.'}
+                    </p>
+                  </div>
+                  <div className="pt-2">
+                    <button
+                      onClick={handleTriggerWorker}
+                      disabled={isActionLoading}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700 shadow-xs transition-colors"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>{isActionLoading ? 'Retrying...' : 'Retry Inspection'}</span>
+                    </button>
+                  </div>
+                </div>
               ) : (
                 /* Launching / Empty State */
                 <div className="text-center p-8 space-y-4">
@@ -569,6 +646,22 @@ export default function CustomerLiveTestingPage({ params }) {
             </div>
 
             {/* Controls */}
+            {isQueued && (
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-3">
+                <span className="text-[11px] text-amber-600 font-medium flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Waiting for worker</span>
+                </span>
+                <button
+                  onClick={handleTriggerWorker}
+                  disabled={isActionLoading}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#2d523e] text-white hover:bg-[#234131] transition-colors disabled:opacity-50"
+                >
+                  {isActionLoading ? 'Assigning...' : 'Trigger Worker'}
+                </button>
+              </div>
+            )}
+
             {isRunning && (
               <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-3">
                 <span className="text-[11px] text-slate-400">Execution in progress</span>

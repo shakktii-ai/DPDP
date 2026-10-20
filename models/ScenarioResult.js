@@ -37,7 +37,16 @@ const ScenarioResultSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['passed', 'needs_review', 'failed', 'inconclusive', 'skipped'],
+      enum: [
+        'passed',
+        'needs_review',
+        'failed',
+        'inconclusive',
+        'skipped',
+        'not_applicable',
+        'action_needed',
+        'compliant',
+      ],
       default: 'needs_review',
       index: true,
     },
