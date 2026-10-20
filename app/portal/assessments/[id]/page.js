@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, use } from 'react';
+import { useState, useEffect, useRef, useCallback, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -65,10 +65,37 @@ export default function CustomerLiveTestingPage({ params }) {
   const [isRetryMode, setIsRetryMode] = useState(false);
 
   const eventSourceRef = useRef(null);
+  const isMountedRef = useRef(true);
+
+  // Fetch snapshot of assessment and test run from database
+  const fetchSnapshot = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/assessments/${assessmentId}/stream`, {
+        headers: { Accept: 'application/json' },
+      });
+      const json = await res.json();
+      if (json.success && isMountedRef.current) {
+        setAssessment(json.assessment || null);
+        setTestRun(json.testRun || null);
+        setEvents(json.events || []);
+        setEvidenceList(json.evidenceList || []);
+        setScenarios(json.scenarios || []);
+        if (json.testRun?.latestScreenshot) {
+          setLatestScreenshot(json.testRun.latestScreenshot);
+          setLatestScreenshotUrl(json.testRun.latestScreenshotUrl || json.testRun.currentUrl || '');
+          setLatestScreenshotTime(json.testRun.latestScreenshotTime || new Date());
+        }
+        setLoading(false);
+      }
+    } catch (pollErr) {
+      console.error('Polling error:', pollErr);
+    }
+  }, [assessmentId]);
 
   // Initialize and connect live event stream
   useEffect(() => {
     let isMounted = true;
+    isMountedRef.current = true;
     let fallbackInterval = null;
 
     const connectStream = () => {
@@ -185,36 +212,12 @@ export default function CustomerLiveTestingPage({ params }) {
       }
     };
 
-    // Fallback JSON fetcher
-    const fetchSnapshot = async () => {
-      try {
-        const res = await fetch(`/api/assessments/${assessmentId}/stream`, {
-          headers: { Accept: 'application/json' },
-        });
-        const json = await res.json();
-        if (json.success && isMounted) {
-          setAssessment(json.assessment || null);
-          setTestRun(json.testRun || null);
-          setEvents(json.events || []);
-          setEvidenceList(json.evidenceList || []);
-          setScenarios(json.scenarios || []);
-          if (json.testRun?.latestScreenshot) {
-            setLatestScreenshot(json.testRun.latestScreenshot);
-            setLatestScreenshotUrl(json.testRun.latestScreenshotUrl || json.testRun.currentUrl || '');
-            setLatestScreenshotTime(json.testRun.latestScreenshotTime || new Date());
-          }
-          setLoading(false);
-        }
-      } catch (pollErr) {
-        console.error('Polling error:', pollErr);
-      }
-    };
-
     connectStream();
     fetchSnapshot();
 
     return () => {
       isMounted = false;
+      isMountedRef.current = false;
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
       }
@@ -222,7 +225,7 @@ export default function CustomerLiveTestingPage({ params }) {
         clearInterval(fallbackInterval);
       }
     };
-  }, [assessmentId]);
+  }, [assessmentId, fetchSnapshot]);
 
   // Handle user interaction: Cancel, Resume, Acknowledge
   const handleControlAction = async (action) => {
