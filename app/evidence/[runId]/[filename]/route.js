@@ -1,12 +1,15 @@
 import fs from 'fs';
 import path from 'path';
+import mongoose from 'mongoose';
+import connectDB from '@/lib/mongodb';
+import Evidence from '@/models/Evidence';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * GET /evidence/[runId]/[filename]
  * Dynamically serves evidence screenshots captured by Playwright.
- * Solves the Next.js production issue where runtime files in public/ return 404.
+ * Serves from local disk if available, or redirects to Cloudinary if hosted in cloud.
  */
 export async function GET(request, { params }) {
   try {
@@ -28,7 +31,26 @@ export async function GET(request, { params }) {
     const filePath = path.join(process.cwd(), 'public', 'evidence', safeRunId, safeFilename);
 
     if (!fs.existsSync(filePath)) {
-      return new Response(JSON.stringify({ error: 'Evidence screenshot not found on disk' }), {
+      // Check if evidence exists in database with Cloudinary URL
+      try {
+        await connectDB();
+        const baseName = safeFilename.replace(/\.[^/.]+$/, '');
+        const query = {
+          screenshotPath: { $regex: baseName, $options: 'i' },
+        };
+        if (mongoose.isValidObjectId(safeRunId)) {
+          query.testRunId = safeRunId;
+        }
+
+        const ev = await Evidence.findOne(query).lean();
+        if (ev && ev.screenshotPath && ev.screenshotPath.startsWith('http')) {
+          return Response.redirect(ev.screenshotPath, 302);
+        }
+      } catch (dbErr) {
+        console.warn('Fallback Cloudinary redirect check error:', dbErr.message);
+      }
+
+      return new Response(JSON.stringify({ error: 'Evidence screenshot not found on disk or Cloudinary' }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
       });
