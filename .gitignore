@@ -66,4 +66,5 @@ Thumbs.db
 .cache/
 .turbo/
 .vercel
-/scripts
+/scripts/*
+!/scripts/worker-daemon.mjs
