@@ -96,7 +96,31 @@ export async function POST(request) {
         testRun: finishedRun,
       });
     } else {
-      // Asynchronously trigger execution
+      // In serverless environments (e.g. Vercel), do NOT spawn floating background Playwright processes.
+      // Serverless containers freeze immediately on response return and lack Chromium binaries.
+      const isServerless = process.env.VERCEL === '1' || process.env.NEXT_RUNTIME === 'edge';
+      if (isServerless) {
+        // Keep the run in 'queued' state so the persistent worker daemon (running locally or on VM) claims it
+        const queuedRun = await TestRun.findByIdAndUpdate(
+          claimedRun._id,
+          {
+            $set: {
+              status: 'queued',
+              currentStep: 'Job queued in MongoDB. Waiting for active Playwright worker daemon (npm run worker).',
+              workerId: null,
+            },
+          },
+          { new: true }
+        );
+
+        return NextResponse.json({
+          success: true,
+          message: 'Job submitted to queue. Start your local worker with "npm run worker" to begin Playwright browser testing.',
+          testRun: queuedRun,
+        }, { status: 202 });
+      }
+
+      // Asynchronously trigger execution in local or persistent environment
       executeInspectionRun(claimedRun._id, mergedOptions).catch((err) => {
         console.error(`[WorkerProcess Error for ${claimedRun._id}]:`, err);
       });
