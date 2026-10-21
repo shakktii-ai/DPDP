@@ -41,18 +41,25 @@ if (!process.env.PLAYWRIGHT_BROWSERS_PATH && fs.existsSync('/ms-playwright')) {
 import connectDB from '../lib/mongodb.js';
 import { claimNextQueuedJob, reconcileStaleJobs, getQueueMetrics } from '../lib/worker-queue.js';
 import { executeInspectionRun } from '../lib/browser-worker.js';
+import { recordHeartbeat, setWorkerOffline, getClusterWorkerStatuses } from '../lib/worker-heartbeat.js';
 import TestRun from '../models/TestRun.js';
 
 const isLocalWorker = process.platform === 'win32' || !process.env.RAILWAY_ENVIRONMENT;
-const WORKER_TYPE = isLocalWorker ? 'local-fallback' : 'railway-primary';
-const WORKER_ID = process.env.WORKER_ID || `worker-${WORKER_TYPE}-${process.pid}-${Date.now().toString(36)}`;
+const WORKER_ROLE = process.env.WORKER_ROLE || (isLocalWorker ? 'local-primary' : 'railway-backup');
+const WORKER_ID = process.env.WORKER_ID || `worker-${WORKER_ROLE}-${process.pid}-${Date.now().toString(36)}`;
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS, 10) || 3000;
 const RECONCILE_INTERVAL_MS = parseInt(process.env.RECONCILE_INTERVAL_MS, 10) || 60000;
+const HEARTBEAT_INTERVAL_MS = parseInt(process.env.HEARTBEAT_INTERVAL_MS, 10) || 5000;
 
 let isShuttingDown = false;
 let isProcessingJob = false;
 let currentJobId = null;
+let currentJobStep = null;
 let lastReconcileTime = 0;
+let lastStandbyLogTime = 0;
+const daemonStartTime = Date.now();
+let jobsCompleted = 0;
+let jobsFailed = 0;
 
 async function verifyBrowserPreflight() {
   console.log(`[WorkerDaemon ${WORKER_ID}] Verifying Playwright Chromium browser environment...`);
@@ -72,17 +79,77 @@ async function verifyBrowserPreflight() {
     console.error(`Error details: ${err.message}`);
     console.error(`Browser path evaluated: ${process.env.PLAYWRIGHT_BROWSERS_PATH || 'default (~/.cache/ms-playwright)'}`);
     console.error(`Remediation:`);
+    console.error(`  - Local Windows: Run 'npx playwright install chromium'`);
     console.error(`  - Docker deployment: Use base image 'mcr.microsoft.com/playwright:v1.64.1-noble'`);
-    console.error(`  - Native Linux build: Run 'npx playwright install --with-deps chromium' in your build phase.`);
     console.error(`========================================================\n`);
     return false;
   }
 }
 
+// Background heartbeat loop
+function startHeartbeatLoop() {
+  setInterval(async () => {
+    if (isShuttingDown) return;
+    try {
+      await recordHeartbeat({
+        workerId: WORKER_ID,
+        role: WORKER_ROLE,
+        status: isProcessingJob ? 'busy' : 'online',
+        activeRunId: currentJobId,
+        currentStep: currentJobStep,
+        metrics: {
+          jobsCompleted,
+          jobsFailed,
+          uptimeSeconds: Math.round((Date.now() - daemonStartTime) / 1000),
+        },
+      });
+    } catch (err) {
+      // Non-fatal
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+}
+
 async function startWorkerDaemon() {
   console.log(`[WorkerDaemon ${WORKER_ID}] Connecting to DPDP Vault database...`);
   await connectDB();
-  console.log(`[WorkerDaemon ${WORKER_ID}] Online and listening for queued Playwright inspection jobs.`);
+
+  // Initial heartbeat registration
+  await recordHeartbeat({
+    workerId: WORKER_ID,
+    role: WORKER_ROLE,
+    status: 'online',
+    metrics: { jobsCompleted: 0, jobsFailed: 0, uptimeSeconds: 0 },
+  });
+  console.log(`[WorkerDaemon ${WORKER_ID}] Heartbeat registered (${WORKER_ROLE}). Health status: ONLINE.`);
+
+  // Start continuous heartbeat refresher
+  startHeartbeatLoop();
+
+  if (WORKER_ROLE === 'local-primary') {
+    console.log(`[WorkerDaemon ${WORKER_ID}] Local worker online and PRIMARY. Preferred priority active.`);
+    console.log(`[WorkerDaemon ${WORKER_ID}] Local worker recovered: Primary priority restored. New jobs claimed locally.`);
+  } else {
+    console.log(`[WorkerDaemon ${WORKER_ID}] Online as BACKUP Railway worker. Standby mode active.`);
+    console.log(`[WorkerDaemon ${WORKER_ID}] Will automatically claim jobs if primary local worker goes offline.`);
+  }
+
+  // Inspect cluster status
+  try {
+    const cluster = await getClusterWorkerStatuses();
+    if (WORKER_ROLE === 'local-primary') {
+      if (cluster.railwayBackupActive) {
+        console.log(`[WorkerDaemon ${WORKER_ID}] Railway fallback active and standing by in cluster.`);
+      } else {
+        console.log(`[WorkerDaemon ${WORKER_ID}] Standalone mode: Railway backup worker is currently offline.`);
+      }
+    } else if (WORKER_ROLE === 'railway-backup') {
+      if (cluster.localPrimaryActive) {
+        console.log(`[WorkerDaemon ${WORKER_ID}] Primary local worker is healthy in cluster. Standing by as backup.`);
+      } else {
+        console.log(`[WorkerDaemon ${WORKER_ID}] Primary local worker is OFFLINE. Railway fallback active: processing queue.`);
+      }
+    }
+  } catch (e) {}
 
   // Verify Chromium is available before claiming work
   await verifyBrowserPreflight();
@@ -101,26 +168,42 @@ async function startWorkerDaemon() {
         }
       }
 
-      // Claim next job atomically
-      const job = await claimNextQueuedJob(WORKER_ID);
-      if (job) {
+      // Claim next job atomically with role-based priority
+      const job = await claimNextQueuedJob(WORKER_ID, { role: WORKER_ROLE });
+      if (job && job._id) {
         isProcessingJob = true;
         currentJobId = job._id;
+        currentJobStep = 'Worker assigned. Launching browser inspection.';
         console.log(`\n========================================================`);
         console.log(`[WorkerDaemon ${WORKER_ID}] Claimed TestRun: ${job._id} (Target: ${job.targetId?.approvedDomain || job.targetId})`);
+        if (WORKER_ROLE === 'local-primary') {
+          console.log(`[WorkerDaemon ${WORKER_ID}] Job claimed locally (PRIMARY). Processing assessment.`);
+        } else {
+          console.log(`[WorkerDaemon ${WORKER_ID}] Job claimed on Railway fallback (BACKUP). Processing assessment.`);
+        }
         console.log(`========================================================`);
 
         const startTime = Date.now();
         try {
           await executeInspectionRun(job._id, job.runOptions || {});
+          jobsCompleted++;
           console.log(`[WorkerDaemon ${WORKER_ID}] Completed TestRun: ${job._id} in ${((Date.now() - startTime) / 1000).toFixed(1)}s.`);
         } catch (jobErr) {
+          jobsFailed++;
           console.error(`[WorkerDaemon ${WORKER_ID}] Error executing TestRun ${job._id}:`, jobErr.message);
         } finally {
           isProcessingJob = false;
           currentJobId = null;
+          currentJobStep = null;
         }
       } else {
+        // If Railway backup worker is standing by because local worker is healthy, log status periodically
+        if (WORKER_ROLE === 'railway-backup') {
+          if (Date.now() - lastStandbyLogTime > 30000) {
+            lastStandbyLogTime = Date.now();
+            console.log(`[WorkerDaemon ${WORKER_ID}] Local primary worker is active. Standing by as automatic fallback.`);
+          }
+        }
         // Sleep before next poll
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
       }
@@ -133,11 +216,14 @@ async function startWorkerDaemon() {
   console.log(`[WorkerDaemon ${WORKER_ID}] Clean shutdown completed.`);
 }
 
-// Graceful shutdown handling with active job release
+// Graceful shutdown handling with active job release and offline notification
 async function handleShutdown(signal) {
   if (isShuttingDown) return;
   isShuttingDown = true;
   console.log(`\n[WorkerDaemon ${WORKER_ID}] ${signal} received. Shutting down gracefully...`);
+
+  // Publish offline status so fallback worker knows immediately
+  await setWorkerOffline(WORKER_ID, WORKER_ROLE);
 
   if (isProcessingJob && currentJobId) {
     console.log(`[WorkerDaemon ${WORKER_ID}] Releasing active job ${currentJobId} back to queue for other workers...`);
@@ -148,6 +234,7 @@ async function handleShutdown(signal) {
           await TestRun.findByIdAndUpdate(currentJobId, {
             status: 'queued',
             workerId: null,
+            workerRole: null,
             leaseExpiresAt: null,
             currentStep: 'Worker stopped during execution. Safely re-queued for fallback pickup.',
           });
@@ -176,3 +263,4 @@ startWorkerDaemon().catch((err) => {
   console.error(`[WorkerDaemon Fatal Error]:`, err);
   process.exit(1);
 });
+

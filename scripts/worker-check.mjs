@@ -50,7 +50,7 @@ function maskMongoUri(uri) {
 
 async function runHealthCheck() {
   console.log('================================================================');
-  console.log(' DPDP Vault — Local Fallback Worker Health & Readiness Check');
+  console.log(' DPDP Vault — Local-First Worker (Primary) Health & Readiness Check');
   console.log('================================================================\n');
 
   let hasErrors = false;
@@ -94,12 +94,12 @@ async function runHealthCheck() {
     // Check if any jobs are currently assigned to active workers
     const activeRuns = await TestRun.find({
       status: { $in: ['starting_browser', 'running', 'in_progress', 'inspecting_website'] }
-    }).select('_id workerId status currentStep updatedAt');
+    }).select('_id workerId workerRole status currentStep updatedAt');
 
     if (activeRuns.length > 0) {
-      console.log(`  [INFO] Currently active jobs on other workers (e.g. Railway):`);
+      console.log(`  [INFO] Currently active jobs on cluster workers:`);
       for (const r of activeRuns) {
-        console.log(`         - Run ${r._id} | Worker: ${r.workerId || 'unknown'} | Step: ${r.currentStep}`);
+        console.log(`         - Run ${r._id} | Role: ${r.workerRole || 'unknown'} | Worker: ${r.workerId || 'unknown'} | Step: ${r.currentStep}`);
       }
     } else {
       console.log(`  [INFO] No runs currently in progress. Queue is ready.`);
@@ -110,8 +110,28 @@ async function runHealthCheck() {
   }
   console.log('');
 
-  // 3. Check Playwright Chromium Browser Launch
-  console.log('--- 3. Playwright Chromium Browser Availability ---');
+  // 3. Check Dual-Worker Cluster & Priority Status
+  console.log('--- 3. Dual-Worker Cluster & Failover Status ---');
+  try {
+    const { getClusterWorkerStatuses } = await import('../lib/worker-heartbeat.js');
+    const cluster = await getClusterWorkerStatuses();
+    console.log(`  Primary Local Worker:   ${cluster.localPrimaryActive ? '✓ ONLINE & PRIMARY (Preferred Priority Active)' : '⚠ OFFLINE (Railway backup will auto-claim)'}`);
+    console.log(`  Backup Railway Worker:  ${cluster.railwayBackupActive ? '✓ ONLINE & STANDBY (Ready to failover)' : '⚠ OFFLINE / Not reporting'}`);
+
+    if (cluster.allWorkers.length > 0) {
+      console.log(`  Registered Workers in Cluster:`);
+      for (const w of cluster.allWorkers) {
+        const statusBadge = w.isHealthy ? 'HEALTHY' : 'STALE/OFFLINE';
+        console.log(`    - [${w.role}] ${w.workerId} (${w.status} / ${statusBadge}) | Last heartbeat: ${w.lastSeenSecondsAgo}s ago`);
+      }
+    }
+  } catch (clusterErr) {
+    console.warn(`  [WARN] Cluster status query: ${clusterErr.message}`);
+  }
+  console.log('');
+
+  // 4. Check Playwright Chromium Browser Launch
+  console.log('--- 4. Playwright Chromium Browser Availability ---');
   try {
     const { chromium } = await import('playwright');
     const startBrowserMs = Date.now();
@@ -145,11 +165,11 @@ async function runHealthCheck() {
     console.log('================================================================\n');
     process.exit(1);
   } else {
-    console.log(' [STATUS] ✓ LOCAL WORKER IS READY.');
+    console.log(' [STATUS] ✓ LOCAL-FIRST WORKER (PRIMARY) IS READY.');
     console.log(' You can start the worker anytime with:');
     console.log('   npm run worker:start');
-    console.log(' The local worker will safely poll the same production queue');
-    console.log(' and process jobs whenever Railway is offline or overloaded.');
+    console.log(' The local worker will act as PRIMARY and claim new jobs first.');
+    console.log(' Railway worker acts as automatic backup if this local PC is offline.');
     console.log('================================================================\n');
     process.exit(0);
   }

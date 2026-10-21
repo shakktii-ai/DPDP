@@ -41,6 +41,12 @@ const TestRunSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    workerRole: {
+      type: String,
+      enum: ['local-primary', 'railway-backup', null],
+      default: null,
+      index: true,
+    },
     claimedAt: {
       type: Date,
       default: null,
