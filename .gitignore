@@ -17,7 +17,10 @@
 .env.development.local
 .env.test.local
 .env.production.local
+.env.worker
+.env*.worker
 !.env.example
+!.env.worker.example
 
 # Runtime Assessment Evidence & Screenshots
 /public/evidence/*
@@ -69,3 +72,4 @@ Thumbs.db
 /scripts/*
 !/scripts/worker-daemon.mjs
 !/scripts/install-browser.mjs
+!/scripts/worker-check.mjs

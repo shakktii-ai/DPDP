@@ -45,6 +45,14 @@ const TestRunSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    lastHeartbeat: {
+      type: Date,
+      default: null,
+    },
+    leaseExpiresAt: {
+      type: Date,
+      default: null,
+    },
     runOptions: {
       type: mongoose.Schema.Types.Mixed,
       default: null,
