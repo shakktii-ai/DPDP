@@ -73,3 +73,4 @@ Thumbs.db
 !/scripts/worker-daemon.mjs
 !/scripts/install-browser.mjs
 !/scripts/worker-check.mjs
+!/scripts/test-local-first-failover.mjs

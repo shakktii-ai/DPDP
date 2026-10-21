@@ -10,6 +10,7 @@
     "worker:build": "node scripts/install-browser.mjs",
     "worker:check": "node scripts/worker-check.mjs",
     "worker:start": "node scripts/worker-daemon.mjs",
+    "worker:test": "node scripts/test-local-first-failover.mjs",
     "lint": "next lint"
   },
   "dependencies": {
