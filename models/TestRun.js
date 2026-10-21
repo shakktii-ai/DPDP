@@ -150,6 +150,14 @@ const TestRunSchema = new mongoose.Schema(
       type: Number,
       default: 120,
     },
+    retryCount: {
+      type: Number,
+      default: 0,
+    },
+    maxRetries: {
+      type: Number,
+      default: 2,
+    },
   },
   {
     timestamps: true,

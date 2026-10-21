@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "worker": "node scripts/worker-daemon.mjs",
+    "worker:build": "node scripts/install-browser.mjs",
+    "worker:start": "node scripts/worker-daemon.mjs",
     "lint": "next lint"
   },
   "dependencies": {

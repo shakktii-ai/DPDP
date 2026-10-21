@@ -66,6 +66,14 @@ export async function POST(request) {
               testRun: existing,
             });
           }
+          // If already failed, do not claim unless force is true
+          if (existing.status === 'failed' && !force) {
+            return NextResponse.json({
+              success: false,
+              message: `TestRun has failed: ${existing.errorMessage || 'Browser inspection failed'}. Pass force=true to force a retry.`,
+              testRun: existing,
+            }, { status: 400 });
+          }
           // If stuck in starting_browser or running, force claim if requested
           if (force) {
             claimedRun = await claimSpecificJob(runId, null, { force: true });

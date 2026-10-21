@@ -29,6 +29,11 @@ if (!process.env.MONGODB_URI) {
   } catch (err) {}
 }
 
+// Auto-detect standard Docker Playwright browser path
+if (!process.env.PLAYWRIGHT_BROWSERS_PATH && fs.existsSync('/ms-playwright')) {
+  process.env.PLAYWRIGHT_BROWSERS_PATH = '/ms-playwright';
+}
+
 import connectDB from '../lib/mongodb.js';
 import { claimNextQueuedJob, reconcileStaleJobs, getQueueMetrics } from '../lib/worker-queue.js';
 import { executeInspectionRun } from '../lib/browser-worker.js';
@@ -41,10 +46,38 @@ let isShuttingDown = false;
 let isProcessingJob = false;
 let lastReconcileTime = 0;
 
+async function verifyBrowserPreflight() {
+  console.log(`[WorkerDaemon ${WORKER_ID}] Verifying Playwright Chromium browser environment...`);
+  try {
+    const { chromium } = await import('playwright');
+    const browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+    });
+    const version = browser.version();
+    await browser.close();
+    console.log(`[WorkerDaemon ${WORKER_ID}] Chromium preflight PASSED (Chromium v${version}). Browser ready.`);
+    return true;
+  } catch (err) {
+    console.error(`\n========================================================`);
+    console.error(`[WorkerDaemon ${WORKER_ID} ERROR] Playwright Chromium preflight check FAILED!`);
+    console.error(`Error details: ${err.message}`);
+    console.error(`Browser path evaluated: ${process.env.PLAYWRIGHT_BROWSERS_PATH || 'default (~/.cache/ms-playwright)'}`);
+    console.error(`Remediation:`);
+    console.error(`  - Docker deployment: Use base image 'mcr.microsoft.com/playwright:v1.64.1-noble'`);
+    console.error(`  - Native Linux build: Run 'npx playwright install --with-deps chromium' in your build phase.`);
+    console.error(`========================================================\n`);
+    return false;
+  }
+}
+
 async function startWorkerDaemon() {
   console.log(`[WorkerDaemon ${WORKER_ID}] Connecting to DPDP Vault database...`);
   await connectDB();
   console.log(`[WorkerDaemon ${WORKER_ID}] Online and listening for queued Playwright inspection jobs.`);
+
+  // Verify Chromium is available before claiming work
+  await verifyBrowserPreflight();
 
   const initialMetrics = await getQueueMetrics();
   console.log(`[WorkerDaemon ${WORKER_ID}] Initial queue metrics: Queued=${initialMetrics.queued}, Running=${initialMetrics.running}, Completed=${initialMetrics.completed}, Failed=${initialMetrics.failed}`);
